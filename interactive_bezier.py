@@ -1,28 +1,16 @@
+
 import numpy as np
 import matplotlib.pyplot as plt
 from read_svg_cubics import read_svg_cubics
 
-# N = Control points
-# M = Curves
-# K = Bezier objects
-
-# P: (N,2) float control-point positions
-# C: (M,4) int indices into P (0-based)
-# I: (M,) int object indices (0-based)
-# F,S: (K,3) float RGB colors in 0..1, NaN means none/unknown
-# W: (K,) float stroke widths, NaN means unspecified
-# D: (K,) int visibility flags
-# viewBox: (4,) float SVG viewBox, or an empty array
-P, C, I, F, S, W, D, viewBox = read_svg_cubics("example.svg")
 
 """
 Optimized cubic bezier curve function
 Each row of C contains 4 indices into P, because C is cubic
 
-Return: 2 element array with x,y coordinates 
+Return: 2 element array with x,y coordinates
 """
 def cubic_bezier(points, t) -> np.ndarray:
-
     p0, p1, p2, p3 = points
     return (
         (1-t)**3 * p0
@@ -32,118 +20,127 @@ def cubic_bezier(points, t) -> np.ndarray:
     )
 
 
-fig, ax = plt.subplots() #Figure (window), and Axis (plotting area)
-selected_array = None
-nearby_array = []
+class InteractiveBezier:
+    def __init__(self, svg_path):
+        # N = Control points
+        # M = Curves
+        # K = Bezier objects
 
-prev_event_x = 0
-prev_event_y = 0
+        # P: (N,2) float control-point positions
+        # C: (M,4) int indices into P (0-based)
+        # I: (M,) int object indices (0-based)
+        # F,S: (K,3) float RGB colors in 0..1, NaN means none/unknown
+        # W: (K,) float stroke widths, NaN means unspecified
+        # D: (K,) int visibility flags
+        # viewBox: (4,) float SVG viewBox, or an empty array
+        self.P, self.C, self.I, self.F, self.S, self.W, self.D, self.viewBox = read_svg_cubics(svg_path)
 
-"""
-Draw plots and gui
-"""
-def draw():
-    ax.clear()
+        self.fig, self.ax = plt.subplots() #Figure (window), and Axis (plotting area)
 
-    t_values = np.linspace(0, 1, 100)
+        self.selected_array = None
+        self.nearby_array = []
 
-    for indices in C:
-        points = P[indices]
-        curve = np.array([cubic_bezier(points, t) for t in t_values])
+        self.prev_event_x = 0
+        self.prev_event_y = 0
 
-        ax.plot(curve[:, 0], curve[:, 1], "b-")                 # Draw the curve, connecting linearly between t values
-        ax.plot(points[:, 0], points[:, 1], "k--", alpha=0.3)   # Draw the control polygon's handles
+    """
+    Draw plots and gui
+    """
+    def draw(self):
+        self.ax.clear()
 
-    ax.scatter(P[:, 0], P[:, 1], color="red", picker=5)         # Draw the control point dots
-    ax.set_aspect("equal")
-    ax.invert_yaxis()
-    ax.set_title("Drag red control points")
+        t_values = np.linspace(0, 1, 100)
 
-    fig.canvas.draw_idle()
+        for indices in self.C:
+            points = self.P[indices]
+            curve = np.array([cubic_bezier(points, t) for t in t_values])
 
-def on_press(event):
-    global selected_array, nearby_array
-    global prev_event_x, prev_event_y
+            self.ax.plot(curve[:, 0], curve[:, 1], "b-")                 # Draw the curve, connecting linearly between t values
+            self.ax.plot(points[:, 0], points[:, 1], "k--", alpha=0.3)   # Draw the control polygon's handles
 
-    if event.inaxes != ax or event.xdata is None:
-        return
+        self.ax.scatter(self.P[:, 0], self.P[:, 1], color="red", picker=5)         # Draw the control point dots
+        self.ax.set_aspect("equal")
+        self.ax.invert_yaxis()
+        self.ax.set_title("Drag red control points")
 
-    prev_event_x = event.xdata
-    prev_event_y = event.ydata
+        self.fig.canvas.draw_idle()
 
-    selected_array = None
-    nearby_array = []
+    def on_press(self, event):
+        if event.inaxes != self.ax or event.xdata is None:
+            return
 
-    # Find nearest control point in screen pixels
-    xy = ax.transData.transform(P)                   # Fetches all control point coordinates
-    distances = np.linalg.norm(                      # Subtracts mouse click pos from control point coordinates
-        xy - np.array([event.x, event.y]), axis=1    
-    )
+        self.prev_event_x = event.xdata
+        self.prev_event_y = event.ydata
 
-    if len(P) == 0:
-        return
-    
-    closest = np.argmin(distances)                   # Gets the smallest distance
+        self.selected_array = None
+        self.nearby_array = []
 
-    if distances[closest] < 12:
-        # Select all points at the same coordinate location
-        selected_array = np.where(
-            np.linalg.norm(P - P[closest], axis=1) < 1e-5
-        )[0]
+        if len(self.P) == 0:
+            return
 
-        # Get the nearby points of the selected point
-        if len(selected_array) >= 2:
-            for selected in selected_array:
+        # Find nearest control point in screen pixels
+        xy = self.ax.transData.transform(self.P)                   # Fetches all control point coordinates
+        distances = np.linalg.norm(                                # Subtracts mouse click pos from control point coordinates
+            xy - np.array([event.x, event.y]), axis=1
+        )
 
-                # Find the curve containing the selected point
-                curve_idx = np.where(C == selected)[0][0]
-                curve = C[curve_idx]
+        closest = np.argmin(distances)                   # Gets the smallest distance
 
-                # Find the selected point's position within the curve
-                position = np.where(curve == selected)[0][0]
+        if distances[closest] < 12:
+            # Select all points at the same coordinate location
+            self.selected_array = np.where(
+                np.linalg.norm(self.P - self.P[closest], axis=1) < 1e-5
+            )[0]
 
-                # Find the adjacent control handle depending on which end the selected point is at
-                if position == 0:
-                    nearby_array.append(curve[1])
-                elif position == 3:
-                    nearby_array.append(curve[2])
+            # Get the nearby points of the selected point
+            if len(self.selected_array) >= 2:
+                for selected in self.selected_array:
 
+                    # Find the curve containing the selected point
+                    curve_idx = np.where(self.C == selected)[0][0]
+                    curve = self.C[curve_idx]
 
-def on_move(event):
-    global prev_event_x, prev_event_y
+                    # Find the selected point's position within the curve
+                    position = np.where(curve == selected)[0][0]
 
-    if selected_array is None or event.inaxes != ax:
-        return
-    if event.xdata is None or event.ydata is None:
-        return
+                    # Find the adjacent control handle depending on which end the selected point is at
+                    if position == 0:
+                        self.nearby_array.append(curve[1])
+                    elif position == 3:
+                        self.nearby_array.append(curve[2])
 
-    # Calculate how far the mouse moved
-    event_x_delta = event.xdata - prev_event_x
-    event_y_delta = event.ydata - prev_event_y
+    def on_move(self, event):
+        if self.selected_array is None or event.inaxes != self.ax:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
 
-    # Move selected anchor points
-    for selected in selected_array:
-        P[selected] = [event.xdata, event.ydata]
+        # Calculate how far the mouse moved
+        event_x_delta = event.xdata - self.prev_event_x
+        event_y_delta = event.ydata - self.prev_event_y
 
-    # Move adjacent handles by the same amount
-    for nearby in nearby_array:
-        P[nearby] += [event_x_delta, event_y_delta]
+        # Move selected anchor points
+        for selected in self.selected_array:
+            self.P[selected] = [event.xdata, event.ydata]
 
-    # Save current position for next mouse movement
-    prev_event_x = event.xdata
-    prev_event_y = event.ydata
+        # Move adjacent handles by the same amount
+        for nearby in self.nearby_array:
+            self.P[nearby] += [event_x_delta, event_y_delta]
 
-    draw()
+        # Save current position for next mouse movement
+        self.prev_event_x = event.xdata
+        self.prev_event_y = event.ydata
 
-def on_release(event):
-    global selected_array, nearby_array
+        self.draw()
 
-    selected_array = None
-    nearby_array = []
+    def on_release(self, event):
+        self.selected_array = None
+        self.nearby_array = []
 
-fig.canvas.mpl_connect("button_press_event", on_press)
-fig.canvas.mpl_connect("motion_notify_event", on_move)
-fig.canvas.mpl_connect("button_release_event", on_release)
+    def run(self):
+        self.fig.canvas.mpl_connect("button_press_event", self.on_press)
+        self.fig.canvas.mpl_connect("motion_notify_event", self.on_move)
+        self.fig.canvas.mpl_connect("button_release_event", self.on_release)
 
-draw()
-plt.show()
+        self.draw()
+        plt.show()

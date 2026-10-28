@@ -1,0 +1,21 @@
+[project]
+name = "liquifytool"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Jasmine Wei", email = "144985291+jas-wei@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+    "svgpathtools>=1.8.0",
+]
+
+[project.scripts]
+liquifytool = "liquifytool:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
