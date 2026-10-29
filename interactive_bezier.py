@@ -1,7 +1,10 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
+
 from read_svg_cubics import read_svg_cubics
+from brush import Brush
 
 
 """
@@ -43,6 +46,8 @@ class InteractiveBezier:
         self.prev_event_x = 0
         self.prev_event_y = 0
 
+        self.brush_circle = None
+
     """
     Draw plots and gui
     """
@@ -65,7 +70,22 @@ class InteractiveBezier:
 
         self.fig.canvas.draw_idle()
 
-    def on_press(self, event):
+    def on_press(self, event, brush):
+        if brush:
+            self.brush_circle = Circle(
+                (event.xdata, event.ydata),
+                radius=brush.radius,
+                fill=False,
+                edgecolor="red",
+                linewidth=2
+            )
+
+            self.ax.add_patch(self.brush_circle)
+            self.fig.canvas.draw_idle()
+
+        else:
+            print("no brush")
+
         if event.inaxes != self.ax or event.xdata is None:
             return
 
@@ -109,7 +129,13 @@ class InteractiveBezier:
                     elif position == 3:
                         self.nearby_array.append(curve[2])
 
-    def on_move(self, event):
+    def on_move(self, event, brush):
+        if event.inaxes != self.ax or self.brush_circle is None:
+            return
+
+        self.brush_circle.center = (event.xdata, event.ydata)
+        self.fig.canvas.draw_idle()
+
         if self.selected_array is None or event.inaxes != self.ax:
             return
         if event.xdata is None or event.ydata is None:
@@ -134,12 +160,28 @@ class InteractiveBezier:
         self.draw()
 
     def on_release(self, event):
+        if hasattr(self, "brush_circle"):
+            self.brush_circle.remove()
+            self.brush_circle = None
+            self.fig.canvas.draw_idle()
+
         self.selected_array = None
         self.nearby_array = []
 
     def run(self):
-        self.fig.canvas.mpl_connect("button_press_event", self.on_press)
-        self.fig.canvas.mpl_connect("motion_notify_event", self.on_move)
+        brush = Brush()
+        
+        self.fig.canvas.mpl_connect(
+            "button_press_event",
+            lambda event: self.on_press(event, brush)
+        )
+
+        self.fig.canvas.mpl_connect(
+            "motion_notify_event",
+            lambda event: self.on_move(event, brush)
+        )
+
+
         self.fig.canvas.mpl_connect("button_release_event", self.on_release)
 
         self.draw()
