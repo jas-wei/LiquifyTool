@@ -68,6 +68,9 @@ class InteractiveBezier:
         self.ax.invert_yaxis()
         self.ax.set_title("Drag red control points")
 
+        if self.brush_circle is not None:
+            self.ax.add_patch(self.brush_circle)
+
         self.fig.canvas.draw_idle()
 
     def on_press(self, event, brush):
@@ -160,7 +163,7 @@ class InteractiveBezier:
         self.draw()
 
     def on_release(self, event):
-        if hasattr(self, "brush_circle"):
+        if self.brush_circle is not None:
             self.brush_circle.remove()
             self.brush_circle = None
             self.fig.canvas.draw_idle()
