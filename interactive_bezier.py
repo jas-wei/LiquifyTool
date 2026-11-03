@@ -2,8 +2,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
+from matplotlib.widgets import Button
 
 from read_svg_cubics import read_svg_cubics
+from fit_curve import fit_curve
 from brush import Brush
 
 
@@ -42,11 +44,15 @@ class InteractiveBezier:
 
         self.selected_array = None
         self.nearby_array = []
+        self.subdivided_curves = []
 
         self.prev_event_x = 0
         self.prev_event_y = 0
 
         self.brush_circle = None
+
+        self.fit_button = None
+        self.fitted_curves = None
 
     """
     Draw plots and gui
@@ -56,14 +62,34 @@ class InteractiveBezier:
 
         t_values = np.linspace(0, 1, 100)
 
+        self.subdivided_curves = []
+
         for indices in self.C:
             points = self.P[indices]
             curve = np.array([cubic_bezier(points, t) for t in t_values])
+            self.subdivided_curves.append(curve)
 
-            self.ax.plot(curve[:, 0], curve[:, 1], "b-")                 # Draw the curve, connecting linearly between t values
-            self.ax.plot(points[:, 0], points[:, 1], "k--", alpha=0.3)   # Draw the control polygon's handles
+        if self.fitted_curves is not None:
+            for control_points in self.fitted_curves:
+                fitted_curve = np.array([
+                    cubic_bezier(control_points, t)
+                    for t in t_values
+                ])
 
-        self.ax.scatter(self.P[:, 0], self.P[:, 1], color="red", picker=5)         # Draw the control point dots
+                self.ax.plot(
+                    fitted_curve[:, 0],
+                    fitted_curve[:, 1],
+                    "g-"
+                )
+
+        else:
+            for indices, curve in zip(self.C, self.subdivided_curves):
+                points = self.P[indices]
+
+                self.ax.plot(curve[:, 0], curve[:, 1], "b-")
+                self.ax.plot(points[:, 0], points[:, 1], "k--", alpha=0.3)
+
+        self.ax.scatter(self.P[:, 0], self.P[:, 1], color="red", picker=5)
         self.ax.set_aspect("equal")
         self.ax.invert_yaxis()
         self.ax.set_title("Drag red control points")
@@ -74,6 +100,9 @@ class InteractiveBezier:
         self.fig.canvas.draw_idle()
 
     def on_press(self, event, brush):
+        if event.inaxes != self.ax or event.xdata is None:
+            return
+        
         if brush:
             self.brush_circle = Circle(
                 (event.xdata, event.ydata),
@@ -88,9 +117,6 @@ class InteractiveBezier:
 
         else:
             print("no brush")
-
-        if event.inaxes != self.ax or event.xdata is None:
-            return
 
         self.prev_event_x = event.xdata
         self.prev_event_y = event.ydata
@@ -163,16 +189,43 @@ class InteractiveBezier:
         self.draw()
 
     def on_release(self, event):
-        if self.brush_circle is not None:
-            self.brush_circle.remove()
-            self.brush_circle = None
-            self.fig.canvas.draw_idle()
-
+        self.brush_circle = None
         self.selected_array = None
         self.nearby_array = []
 
+        self.draw()
+        
+    def on_fit(self, event):
+        print("Fitting Curves")
+
+        fitted_curves = []
+
+        for curve in self.subdivided_curves:
+            fitted = fit_curve(curve, max_error=1.0)
+            fitted_curves.extend(fitted)
+
+        self.P = np.array([
+            point
+            for curve in fitted_curves
+            for point in curve
+        ])
+
+        self.C = np.arange(len(self.P)).reshape(-1, 4)
+
+        self.fitted_curves = None
+
+        self.draw()
+
+    def setup_ui(self):
+        toggle_ax = self.fig.add_axes([0.70, 0.85, 0.18, 0.1])
+        
+        self.fit_button = Button(toggle_ax, "Fit Curves")
+        self.fit_button.on_clicked(self.on_fit)
+
     def run(self):
         brush = Brush()
+
+        self.setup_ui()
         
         self.fig.canvas.mpl_connect(
             "button_press_event",
@@ -183,7 +236,6 @@ class InteractiveBezier:
             "motion_notify_event",
             lambda event: self.on_move(event, brush)
         )
-
 
         self.fig.canvas.mpl_connect("button_release_event", self.on_release)
 
