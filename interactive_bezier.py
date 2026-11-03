@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.widgets import Button
 
+
 from read_svg_cubics import read_svg_cubics
 from fit_curve import fit_curve
 from brush import Brush
@@ -45,30 +46,39 @@ class InteractiveBezier:
         self.selected_array = None
         self.nearby_array = []
         self.subdivided_curves = []
+        self.falloffs = []
 
         self.prev_event_x = 0
         self.prev_event_y = 0
+        self.is_dragging = False
 
+        self.brush = Brush()
         self.brush_circle = None
 
-        self.fit_button = None
         self.fitted_curves = None
+        
+        self.liquify_toggle = None
+        self.liquify_enabled = False
 
     """
-    Draw plots and gui
+    Draw Bezier curves and update visualization
     """
     def draw(self):
         self.ax.clear()
 
+        # Sample 100 points along each Bezier curve
         t_values = np.linspace(0, 1, 100)
 
-        self.subdivided_curves = []
+        if not self.liquify_enabled:
+            # Generate subdivided curves from control points
+            self.subdivided_curves = []
 
-        for indices in self.C:
-            points = self.P[indices]
-            curve = np.array([cubic_bezier(points, t) for t in t_values])
-            self.subdivided_curves.append(curve)
+            for indices in self.C:
+                points = self.P[indices]
+                curve = np.array([cubic_bezier(points, t) for t in t_values])
+                self.subdivided_curves.append(curve)
 
+        # Draw fitted curves if available
         if self.fitted_curves is not None:
             for control_points in self.fitted_curves:
                 fitted_curve = np.array([
@@ -83,26 +93,41 @@ class InteractiveBezier:
                 )
 
         else:
+            # Draw original/subdivided curves
             for indices, curve in zip(self.C, self.subdivided_curves):
                 points = self.P[indices]
 
                 self.ax.plot(curve[:, 0], curve[:, 1], "b-")
-                self.ax.plot(points[:, 0], points[:, 1], "k--", alpha=0.3)
 
-        self.ax.scatter(self.P[:, 0], self.P[:, 1], color="red", picker=5)
+                # Only show control handles when liquify is disabled
+                if not self.liquify_enabled:
+                    self.ax.plot(points[:, 0], points[:, 1], "k--", alpha=0.3)
+
+        # Only show control points when liquify is disabled
+        if not self.liquify_enabled:
+            self.ax.scatter(self.P[:, 0], self.P[:, 1], color="red", picker=5)
+
+        # Configure plot appearance
         self.ax.set_aspect("equal")
         self.ax.invert_yaxis()
-        self.ax.set_title("Drag red control points")
 
+        self.ax.set_title(
+            "Liquify Mode" if self.liquify_enabled else "Drag red control points"
+        )
+
+        # Draw brush outline if active
         if self.brush_circle is not None:
             self.ax.add_patch(self.brush_circle)
 
+        # Refresh canvas
         self.fig.canvas.draw_idle()
+
 
     def on_press(self, event, brush):
         if event.inaxes != self.ax or event.xdata is None:
             return
-        
+
+        self.is_dragging = True
         if brush:
             self.brush_circle = Circle(
                 (event.xdata, event.ydata),
@@ -127,81 +152,131 @@ class InteractiveBezier:
         if len(self.P) == 0:
             return
 
-        # Find nearest control point in screen pixels
-        xy = self.ax.transData.transform(self.P)                   # Fetches all control point coordinates
-        distances = np.linalg.norm(                                # Subtracts mouse click pos from control point coordinates
-            xy - np.array([event.x, event.y]), axis=1
-        )
+        if not self.liquify_enabled:
+            # Find nearest control point in screen pixels
+            xy = self.ax.transData.transform(self.P)                   # Fetches all control point coordinates
+            distances = np.linalg.norm(                                # Subtracts mouse click pos from control point coordinates
+                xy - np.array([event.x, event.y]), axis=1
+            )
 
-        closest = np.argmin(distances)                   # Gets the smallest distance
+            closest = np.argmin(distances)                   # Gets the smallest distance
 
-        if distances[closest] < 12:
-            # Select all points at the same coordinate location
-            self.selected_array = np.where(
-                np.linalg.norm(self.P - self.P[closest], axis=1) < 1e-5
-            )[0]
+            if distances[closest] < 12:
+                # Select all points at the same coordinate location
+                self.selected_array = np.where(
+                    np.linalg.norm(self.P - self.P[closest], axis=1) < 1e-5
+                )[0]
 
-            # Get the nearby points of the selected point
-            if len(self.selected_array) >= 2:
-                for selected in self.selected_array:
+                # Get the nearby points of the selected point
+                if len(self.selected_array) >= 2:
+                    for selected in self.selected_array:
 
-                    # Find the curve containing the selected point
-                    curve_idx = np.where(self.C == selected)[0][0]
-                    curve = self.C[curve_idx]
+                        # Find the curve containing the selected point
+                        curve_idx = np.where(self.C == selected)[0][0]
+                        curve = self.C[curve_idx]
 
-                    # Find the selected point's position within the curve
-                    position = np.where(curve == selected)[0][0]
+                        # Find the selected point's position within the curve
+                        position = np.where(curve == selected)[0][0]
 
-                    # Find the adjacent control handle depending on which end the selected point is at
-                    if position == 0:
-                        self.nearby_array.append(curve[1])
-                    elif position == 3:
-                        self.nearby_array.append(curve[2])
+                        # Find the adjacent control handle depending on which end the selected point is at
+                        if position == 0:
+                            self.nearby_array.append(curve[1])
+                        elif position == 3:
+                            self.nearby_array.append(curve[2])
+        else:
+            self.brush.center_x = event.xdata
+            self.brush.center_y = event.ydata
+
+            self.falloffs = []
+
+            for curve in self.subdivided_curves:
+                falloffs = []
+
+                for x, y in curve:
+                    falloffs.append(self.brush.falloff(x, y))
+
+                self.falloffs.append(np.array(falloffs))
+                
 
     def on_move(self, event, brush):
-        if event.inaxes != self.ax or self.brush_circle is None:
+        if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
             return
 
-        self.brush_circle.center = (event.xdata, event.ydata)
-        self.fig.canvas.draw_idle()
+        if self.brush_circle is not None:
+            self.brush_circle.center = (event.xdata, event.ydata)
+            self.fig.canvas.draw_idle()
 
-        if self.selected_array is None or event.inaxes != self.ax:
+        # Only allow movement while dragging
+        if not self.is_dragging:
             return
-        if event.xdata is None or event.ydata is None:
+
+        # Normal mode requires a selected control point
+        if not self.liquify_enabled and self.selected_array is None:
             return
 
         # Calculate how far the mouse moved
         event_x_delta = event.xdata - self.prev_event_x
         event_y_delta = event.ydata - self.prev_event_y
 
-        # Move selected anchor points
-        for selected in self.selected_array:
-            self.P[selected] = [event.xdata, event.ydata]
+        if self.liquify_enabled:
+            for subdivided_curve, falloffs in zip(self.subdivided_curves, self.falloffs):
+                for point, falloff in zip(subdivided_curve, falloffs):
+                    # point = [x, y]
+                    # falloff = float between 0 and 1
+                    point += np.array([event_x_delta, event_y_delta]) * falloff
+        else:
+            # Move selected anchor points
+            for selected in self.selected_array:
+                self.P[selected] = [event.xdata, event.ydata]
 
-        # Move adjacent handles by the same amount
-        for nearby in self.nearby_array:
-            self.P[nearby] += [event_x_delta, event_y_delta]
+            # Move adjacent handles by the same amount
+            for nearby in self.nearby_array:
+                self.P[nearby] += [event_x_delta, event_y_delta]
 
         # Save current position for next mouse movement
         self.prev_event_x = event.xdata
         self.prev_event_y = event.ydata
+            
 
         self.draw()
 
     def on_release(self, event):
+        self.is_dragging = False
+        
         self.brush_circle = None
         self.selected_array = None
         self.nearby_array = []
 
         self.draw()
         
+
+
+    def setup_ui(self):
+        toggle_ax = self.fig.add_axes([0.70, 0.85, 0.18, 0.1])
+
+        self.liquify_toggle = Button(toggle_ax, "Liquify: OFF")
+        self.liquify_toggle.on_clicked(self.on_liquify_toggle)
+
+    def on_liquify_toggle(self, event):
+        self.liquify_enabled = not self.liquify_enabled
+
+        if not self.liquify_enabled:
+            self.on_fit(event)
+
+        self.liquify_toggle.label.set_text(
+            "Liquify: ON" if self.liquify_enabled else "Liquify: OFF"
+        )
+
+
+        self.fig.canvas.draw_idle()
+
     def on_fit(self, event):
         print("Fitting Curves")
 
         fitted_curves = []
 
         for curve in self.subdivided_curves:
-            fitted = fit_curve(curve, max_error=1.0)
+            fitted = fit_curve(curve, max_error=5.0)
             fitted_curves.extend(fitted)
 
         self.P = np.array([
@@ -216,25 +291,19 @@ class InteractiveBezier:
 
         self.draw()
 
-    def setup_ui(self):
-        toggle_ax = self.fig.add_axes([0.70, 0.85, 0.18, 0.1])
-        
-        self.fit_button = Button(toggle_ax, "Fit Curves")
-        self.fit_button.on_clicked(self.on_fit)
-
     def run(self):
-        brush = Brush()
+        
 
         self.setup_ui()
         
         self.fig.canvas.mpl_connect(
             "button_press_event",
-            lambda event: self.on_press(event, brush)
+            lambda event: self.on_press(event, self.brush)
         )
 
         self.fig.canvas.mpl_connect(
             "motion_notify_event",
-            lambda event: self.on_move(event, brush)
+            lambda event: self.on_move(event, self.brush)
         )
 
         self.fig.canvas.mpl_connect("button_release_event", self.on_release)
