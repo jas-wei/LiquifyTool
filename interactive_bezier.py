@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.widgets import Button
 
-
 from read_svg_cubics import read_svg_cubics
 from fit_curve import fit_curve
 from brush import Brush
@@ -25,7 +24,11 @@ def cubic_bezier(points, t) -> np.ndarray:
         + t**3 * p3
     )
 
-
+"""
+Plots an interactive window where the user can drag control points of Bezier curves.
+When in liquify mode, the user can click and drag to move points in the subdivided curves based on a brush falloff.
+When exiting liquify mode, the subdivided curves are fitted back to cubic Bezier curves.
+"""
 class InteractiveBezier:
     def __init__(self, svg_path):
         # N = Control points
@@ -60,9 +63,7 @@ class InteractiveBezier:
         self.liquify_toggle = None
         self.liquify_enabled = False
 
-    """
-    Draw Bezier curves and update visualization
-    """
+
     def draw(self):
         self.ax.clear()
 
@@ -127,7 +128,6 @@ class InteractiveBezier:
         if event.inaxes != self.ax or event.xdata is None:
             return
 
-        self.is_dragging = True
         if brush:
             self.brush_circle = Circle(
                 (event.xdata, event.ydata),
@@ -140,11 +140,9 @@ class InteractiveBezier:
             self.ax.add_patch(self.brush_circle)
             self.fig.canvas.draw_idle()
 
-        else:
-            print("no brush")
-
         self.prev_event_x = event.xdata
         self.prev_event_y = event.ydata
+        self.is_dragging = True
 
         self.selected_array = None
         self.nearby_array = []
@@ -152,10 +150,24 @@ class InteractiveBezier:
         if len(self.P) == 0:
             return
 
-        if not self.liquify_enabled:
+        if self.liquify_enabled:
+            # Update brush center position based on mouse click
+            self.brush.center_x = event.xdata
+            self.brush.center_y = event.ydata
+
+            # Calculate falloff values for each point in the subdivided curves based on the brush's influence
+            self.falloffs = []
+            for curve in self.subdivided_curves:
+                falloffs = []
+
+                for x, y in curve:
+                    falloffs.append(self.brush.falloff(x, y))
+
+                self.falloffs.append(np.array(falloffs))
+        else:
             # Find nearest control point in screen pixels
-            xy = self.ax.transData.transform(self.P)                   # Fetches all control point coordinates
-            distances = np.linalg.norm(                                # Subtracts mouse click pos from control point coordinates
+            xy = self.ax.transData.transform(self.P)         # Fetches all control point coordinates
+            distances = np.linalg.norm(                      # Subtracts mouse click pos from control point coordinates
                 xy - np.array([event.x, event.y]), axis=1
             )
 
@@ -183,22 +195,9 @@ class InteractiveBezier:
                             self.nearby_array.append(curve[1])
                         elif position == 3:
                             self.nearby_array.append(curve[2])
-        else:
-            self.brush.center_x = event.xdata
-            self.brush.center_y = event.ydata
-
-            self.falloffs = []
-
-            for curve in self.subdivided_curves:
-                falloffs = []
-
-                for x, y in curve:
-                    falloffs.append(self.brush.falloff(x, y))
-
-                self.falloffs.append(np.array(falloffs))
-                
-
-    def on_move(self, event, brush):
+         
+                            
+    def on_move(self, event):
         if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
             return
 
@@ -218,7 +217,9 @@ class InteractiveBezier:
         event_x_delta = event.xdata - self.prev_event_x
         event_y_delta = event.ydata - self.prev_event_y
 
+        
         if self.liquify_enabled:
+            # Move all points in the subdivided curves based on the brush falloff
             for subdivided_curve, falloffs in zip(self.subdivided_curves, self.falloffs):
                 for point, falloff in zip(subdivided_curve, falloffs):
                     # point = [x, y]
@@ -236,9 +237,9 @@ class InteractiveBezier:
         # Save current position for next mouse movement
         self.prev_event_x = event.xdata
         self.prev_event_y = event.ydata
-            
 
         self.draw()
+
 
     def on_release(self, event):
         self.is_dragging = False
@@ -248,14 +249,7 @@ class InteractiveBezier:
         self.nearby_array = []
 
         self.draw()
-        
 
-
-    def setup_ui(self):
-        toggle_ax = self.fig.add_axes([0.70, 0.85, 0.18, 0.1])
-
-        self.liquify_toggle = Button(toggle_ax, "Liquify: OFF")
-        self.liquify_toggle.on_clicked(self.on_liquify_toggle)
 
     def on_liquify_toggle(self, event):
         self.liquify_enabled = not self.liquify_enabled
@@ -263,22 +257,22 @@ class InteractiveBezier:
         if not self.liquify_enabled:
             self.on_fit(event)
 
-        self.liquify_toggle.label.set_text(
-            "Liquify: ON" if self.liquify_enabled else "Liquify: OFF"
-        )
-
+        self.liquify_toggle.label.set_text("Liquify: ON" if self.liquify_enabled else "Liquify: OFF")
 
         self.fig.canvas.draw_idle()
 
-    def on_fit(self, event):
-        print("Fitting Curves")
 
+    def on_fit(self, event) -> None:
         fitted_curves = []
 
+        # Fit each subdivided curve and collect the fitted curves in one list
         for curve in self.subdivided_curves:
-            fitted = fit_curve(curve, max_error=5.0)
+            # Returns an array of fitted Bezier curves, each represented by 4 control points
+            fitted = fit_curve(curve, max_error=5.0) 
             fitted_curves.extend(fitted)
 
+        # Flatten elements of fitted_curves into a single array of control points
+        # Update self.P and self.C to reflect the new fitted curves
         self.P = np.array([
             point
             for curve in fitted_curves
@@ -286,27 +280,27 @@ class InteractiveBezier:
         ])
 
         self.C = np.arange(len(self.P)).reshape(-1, 4)
-
+        
         self.fitted_curves = None
-
         self.draw()
 
-    def run(self):
-        
 
-        self.setup_ui()
-        
-        self.fig.canvas.mpl_connect(
-            "button_press_event",
-            lambda event: self.on_press(event, self.brush)
-        )
+    def setup_ui(self):
+        toggle_ax = self.fig.add_axes([0.70, 0.85, 0.18, 0.1])
 
-        self.fig.canvas.mpl_connect(
-            "motion_notify_event",
-            lambda event: self.on_move(event, self.brush)
-        )
+        # Create a button to toggle liquify mode
+        self.liquify_toggle = Button(toggle_ax, "Liquify: OFF")
+        self.liquify_toggle.on_clicked(self.on_liquify_toggle)
 
+        # Connect mouse events to their respective handlers
+        self.fig.canvas.mpl_connect("button_press_event", lambda event: self.on_press(event, self.brush))
+        self.fig.canvas.mpl_connect("motion_notify_event", self.on_move)
         self.fig.canvas.mpl_connect("button_release_event", self.on_release)
+
+
+    def run(self) -> None:
+        # Set up the user interface and event connections
+        self.setup_ui()
 
         self.draw()
         plt.show()
